@@ -1,0 +1,111 @@
+{
+    "Comment": "A state machine for daily language model training",
+    "StartAt": "StartPreprocessing",
+    "States": {
+        "StartPreprocessing": {
+            "Type": "Task",
+            "Resource": "${PreprocessingFunctionArn}",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 1,
+                    "BackoffRate": 2
+                }
+            ],
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "InvalidDataFrameException"
+                    ],
+                    "Next": "InvalidObjectFallback"
+                }
+            ],
+            "Next": "RunTrainingJob"
+        },
+        "RunTrainingJob": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sagemaker:createTrainingJob.sync",
+            "Parameters": {
+                "TrainingJobName.$": "$.training",
+                "AlgorithmSpecification": {
+                    "TrainingImage": "811284229777.dkr.ecr.us-east-1.amazonaws.com/blazingtext:1",
+                    "TrainingInputMode": "File"
+                },
+                "ResourceConfig": {
+                    "InstanceCount": 1,
+                    "InstanceType": "ml.m5.large",
+                    "VolumeSizeInGB": 10
+                },
+                "HyperParameters": {
+                    "mode": "cbow",
+                    "epochs": "10",
+                    "vector_dim": "200",
+                    "early_stopping": "True",
+                    "patience": "4",
+                    "min_epochs": "5"
+                },
+                "EnableManagedSpotTraining": false,
+                "InputDataConfig": [
+                    {
+                        "ChannelName": "train",
+                        "ContentType": "text/plain",
+                        "DataSource": {
+                            "S3DataSource": {
+                                "S3DataDistributionType": "FullyReplicated",
+                                "S3DataType": "S3Prefix",
+                                "S3Uri.$": "$.dataset"
+                            }
+                        }
+                    }
+                ],
+                "OutputDataConfig": {
+                    "S3OutputPath": "${PretrainedModelPath}"
+                },
+                "RetryStrategy": {
+                    "MaximumRetryAttempts": 1
+                },
+                "RoleArn": "${TrainingJobRoleArn}",
+                "StoppingCondition": {
+                    "MaxRuntimeInSeconds": 300
+                }
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "SageMaker.AmazonSageMakerException"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 1,
+                    "BackoffRate": 1.1
+                },
+                {
+                    "ErrorEquals": [
+                        "SageMaker.ResourceLimitExceededException"
+                    ],
+                    "IntervalSeconds": 60,
+                    "MaxAttempts": 5000,
+                    "BackoffRate": 1
+                },
+                {
+                    "ErrorEquals": [
+                        "States.Timeout"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 5,
+                    "BackoffRate": 1
+                }
+            ],
+            "End": true
+        },
+        "InvalidObjectFallback": {
+            "Type": "Pass",
+            "Result": "This is a fallback from a Lambda function exception",
+            "End": true
+        }
+    }
+}

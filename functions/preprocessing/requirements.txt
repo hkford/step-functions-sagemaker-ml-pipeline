@@ -1,0 +1,5 @@
+mecab-python3
+unidic-lite
+pandas
+numpy
+faker

@@ -1,0 +1,28 @@
+{
+    "version": "0",
+    "id": "1a27ceec-7894-0dec-45ca-1912c3472845",
+    "detail-type": "Object Created",
+    "source": "aws.s3",
+    "account": "123456789012",
+    "time": "2022-12-07T08: 56: 31Z",
+    "region": "us-east-1",
+    "resources": [
+        "arn:aws:s3:::source-bucket"
+    ],
+    "detail": {
+        "version": "0",
+        "bucket": {
+            "name": "source-bucket"
+        },
+        "object": {
+            "key": "data/valid.csv",
+            "size": 197010,
+            "etag": "135f13e7f19ab26f9cc9c2fa1bddc892",
+            "sequencer": "006390553F8A9D9E85"
+        },
+        "request-id": "PQXJMKYHM3578HNS",
+        "requester": "123456789012",
+        "source-ip-address": "192.168.0.0",
+        "reason": "PutObject"
+    }
+}

@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ml-pipeline
+
+  Sample SAM Template for ml-pipeline
+
+Resources:
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+
+  PreprocessedBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  PretrainedModelBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  MLTrainingStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/ml-pipeline.asl.json
+      DefinitionSubstitutions:
+        PreprocessingFunctionArn: !GetAtt PreprocessingFunction.Arn
+        TrainingJobRoleArn: !GetAtt SageMakerTrainingJobRole.Arn
+        PretrainedModelPath: !Sub "s3://${PretrainedModelBucket}/pretrained"
+      Role: !GetAtt StepFunctionsExecutionRole.Arn
+      Events:
+        OnS3Put:
+          Type: EventBridgeRule
+          Properties:
+            # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-statemachine-statemachineeventbridgerule.html#sam-statemachine-statemachineeventbridgerule-input
+            # Do not specify Input property otherwise constant values specified in Input will be passed to Step Functions' input.
+            # If you do not specify Input property S3 event information is passed to Step Functions' input.
+            # Input: DO_NOT_INCLUDE
+            Pattern:
+              # This pattern is copied from the management console's editor.
+              # https://docs.aws.amazon.com/step-functions/latest/dg/tutorial-cloudwatch-events-s3.html#tutorial-cloudwatch-events-s3-cwe
+              source:
+                - "aws.s3"
+              detail-type:
+                - "Object Created"
+              detail:
+                bucket:
+                  name:
+                    - !Ref SourceBucket
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        # https://docs.aws.amazon.com/step-functions/latest/dg/sagemaker-iam.html
+        - PolicyName: "run-sagemaker-job"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # https://ts223.hatenablog.com/entry/aws/batch-on-fargate
+              - Effect: "Allow"
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource:
+                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForSageMakerTrainingJobsRule
+              - Effect: "Allow"
+                Action:
+                  - sagemaker:CreateTrainingJob
+                  - sagemaker:DescribeTrainingJob
+                  - sagemaker:StopTrainingJob
+                Resource:
+                  - !Sub arn:${AWS::Partition}:sagemaker:${AWS::Region}:${AWS::AccountId}:training-job/*
+              - Effect: "Allow"
+                Action:
+                  - sagemaker:ListTags
+                  - sagemaker:AddTags
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - iam:PassRole
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: "sagemaker.amazonaws.com"
+        - PolicyName: "invoke-lambda"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt PreprocessingFunction.Arn
+
+  SageMakerTrainingJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+  PreprocessingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Timeout: 900
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref SourceBucket
+        - S3WritePolicy:
+            BucketName: !Ref PreprocessedBucket
+      Environment:
+        Variables:
+          TARGET_BUCKET: !Ref PreprocessedBucket
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ./functions/preprocessing
+      DockerTag: python3.8-v1
+
+Outputs:
+  DatasetSourceBucket:
+    Value: !Ref SourceBucket
